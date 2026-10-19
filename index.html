@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GB.rs — Game Boy in WebAssembly</title>
+<style>
+  :root { --shell: #c9c5b8; --shell-dark: #a9a597; --screen: #e0f8d0; --ink: #2b2a33; --accent: #8b1e3f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #1d1c22; color: var(--ink);
+         font: 15px/1.5 "Trebuchet MS", system-ui, sans-serif; }
+  .gb { width: min(94vw, 440px); background: var(--shell); border-radius: 14px 14px 70px 14px; padding: 26px 26px 34px;
+        box-shadow: inset -4px -4px 0 var(--shell-dark), 0 20px 60px #0008; }
+  .bezel { background: #5b5a66; border-radius: 10px 10px 40px 10px; padding: 18px 22px 22px; }
+  canvas { display: block; width: 100%; aspect-ratio: 160 / 144; image-rendering: pixelated; background: var(--screen); }
+  h1 { margin: 16px 0 4px; font-size: 22px; font-style: italic; letter-spacing: .5px; }
+  h1 b { color: var(--accent); }
+  p { margin: 0 0 12px; font-size: 13px; }
+  label.load { display: inline-block; padding: 8px 14px; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+  label.load:focus-within { outline: 3px solid #fff; outline-offset: 2px; }
+  input[type=file] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  #status { margin-left: 10px; font-size: 13px; }
+  .pad { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+  .dpad, .ab { display: grid; gap: 6px; justify-content: center; }
+  .dpad { grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 44px); }
+  .ab { grid-template-columns: repeat(2, 54px); align-content: center; transform: rotate(-20deg); }
+  button { border: 0; border-radius: 8px; background: #2b2a33; color: #ddd; font: inherit; cursor: pointer; touch-action: none; }
+  .ab button { border-radius: 50%; height: 54px; background: var(--accent); color: #fff; }
+  .ss { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+  .ss button { padding: 6px 14px; border-radius: 12px; background: var(--shell-dark); color: var(--ink); font-size: 12px; }
+  button:active { filter: brightness(1.4); }
+</style>
+</head>
+<body>
+<main class="gb">
+  <div class="bezel"><canvas id="lcd" width="160" height="144"></canvas></div>
+  <h1>GB<b>.rs</b></h1>
+  <p>Load a .gb ROM (or drop one on the page). Arrows move, Z is A, X is B, Enter is Start, Backspace is Select.</p>
+  <label class="load">Choose ROM<input id="rom" type="file" accept=".gb,.gbc"></label><span id="status">No ROM loaded</span>
+  <div class="pad">
+    <div class="dpad">
+      <span></span><button data-k="2">▲</button><span></span>
+      <button data-k="1">◀</button><span></span><button data-k="0">▶</button>
+      <span></span><button data-k="3">▼</button><span></span>
+    </div>
+    <div class="ab"><button data-k="5">B</button><button data-k="4">A</button></div>
+  </div>
+  <div class="ss"><button data-k="6">Select</button><button data-k="7">Start</button></div>
+</main>
+<script type="module">
+import init, { Gb } from './pkg/gb.js';
+
+const KEYS = { ArrowRight: 0, ArrowLeft: 1, ArrowUp: 2, ArrowDown: 3, z: 4, x: 5, Backspace: 6, Enter: 7 };
+const ctx = document.getElementById('lcd').getContext('2d');
+const status = document.getElementById('status');
+let gb = null, last = 0;
+
+await init();
+
+function load(bytes, name) {
+  gb = new Gb(bytes);
+  status.textContent = gb.title() || name;
+}
+
+document.getElementById('rom').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (f) load(new Uint8Array(await f.arrayBuffer()), f.name);
+});
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', async e => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f) load(new Uint8Array(await f.arrayBuffer()), f.name);
+});
+
+const press = (bit, down) => gb && gb.key(bit, down);
+addEventListener('keydown', e => { const k = KEYS[e.key]; if (k !== undefined) { press(k, true); e.preventDefault(); } });
+addEventListener('keyup', e => { const k = KEYS[e.key]; if (k !== undefined) press(k, false); });
+for (const b of document.querySelectorAll('[data-k]')) {
+  const k = +b.dataset.k;
+  b.addEventListener('pointerdown', () => press(k, true));
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => press(k, false));
+}
+
+function loop(t) {
+  requestAnimationFrame(loop);
+  if (!gb || t - last < 1000 / 59.7) return; // lock to the Game Boy's ~59.7 Hz
+  last = t;
+  const px = gb.frame();
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(px.buffer), 160, 144), 0, 0);
+  const s = gb.serial();
+  if (s) console.log('serial:', s);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
